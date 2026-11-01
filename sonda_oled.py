@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-sonda_oled.py — giro di ricognizione PRIMA di costruire il bot errori-prezzo OLED.
+sonda_oled.py  v2 — ricognizione di nuovi siti per il bot errori-prezzo OLED.
 
 Per ogni sito candidato prova a leggere una pagina di TV OLED e riporta:
   - codice HTTP e se c'è un blocco anti-bot / captcha
@@ -28,16 +28,23 @@ SESSION.headers.update({"Accept-Language": "it-IT,it;q=0.9",
                         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"})
 
 TARGETS = [
-    ("Trovaprezzi OLED", "https://www.trovaprezzi.it/televisori-lcd-plasma/offerte/tv-oled"),
-    ("Trovaprezzi OLED 55", "https://www.trovaprezzi.it/televisori-lcd-plasma/offerte/tv-oled-55"),
-    ("idealo ricerca", "https://www.idealo.it/MainSearchProductCategory.html?q=tv+oled"),
-    ("MediaWorld OLED 55", "https://www.mediaworld.it/it/list/tv-oled-55-pollici"),
-    ("Unieuro ricerca", "https://www.unieuro.it/online/?q=tv%20oled"),
-    ("Euronics ricerca", "https://www.euronics.it/search?q=tv+oled"),
-    ("Amazon ricerca", "https://www.amazon.it/s?k=tv+oled"),
-    ("ePrice ricerca", "https://www.eprice.it/sa/?qs=tv+oled"),
-    ("Yeppon ricerca", "https://www.yeppon.it/ricerca/?q=tv+oled"),
-    ("Monclick ricerca", "https://www.monclick.it/ricerca?q=tv+oled"),
+    # --- PcComponentes (multinazionale spagnola, sito italiano) ---
+    ("PcComponentes OLED", "https://www.pccomponentes.it/televisori/oled"),
+    ("PcComponentes Philips OLED", "https://www.pccomponentes.it/marche/philips/televisori/oled"),
+    ("PcComponentes LG", "https://www.pccomponentes.it/televisori/lg-electronics"),
+    # --- shop ufficiali dei produttori ---
+    ("Samsung Shop OLED", "https://www.samsung.com/it/tvs/oled-tv/"),
+    ("LG Shop OLED (a)", "https://www.lg.com/it/tv-soundbar/oled-tv/"),
+    ("LG Shop OLED (b)", "https://www.lg.com/it/tv/oled-tv/"),
+    ("Sony Store", "https://www.sony.it/store/tv"),
+    ("Philips TV Shop", "https://www.philips.it/c-m-so/televisori/oled-tv"),
+    # --- grandi catene ---
+    ("Unieuro Samsung OLED", "https://www.unieuro.it/online/samsung-oled-sis"),
+    ("Unieuro TV OLED", "https://www.unieuro.it/online/TV/TV-OLED"),
+    ("Expert ricerca", "https://www.expertonline.it/catalogsearch/result/?q=tv+oled"),
+    ("Comet ricerca", "https://www.comet.it/search?q=tv%20oled"),
+    # --- controllo: MediaWorld categoria con arrivo dalla home ---
+    ("MediaWorld categoria", "https://www.mediaworld.it/it/category/tv-oled-400103.html"),
 ]
 
 MODEL = re.compile(
@@ -86,6 +93,11 @@ def probe(name, url):
     t0 = time.time()
     try:
         r = SESSION.get(url, timeout=25, allow_redirects=True)
+        if r.status_code == 403:
+            time.sleep(2)
+            home = re.match(r"https://[^/]+", url).group(0) + "/"
+            r = SESSION.get(url, timeout=25, allow_redirects=True,
+                            headers={"Referer": home, "Sec-Fetch-Site": "same-origin"})
     except Exception as ex:  # noqa: BLE001
         print(f"\n### {name}\n  ❌ errore di rete: {str(ex)[:150]}")
         return
@@ -96,7 +108,9 @@ def probe(name, url):
     prices = PRICE.findall(body)
     types, samples = jsonld_summary(body)
     nextdata = "__NEXT_DATA__" in body
-    state = re.search(r"window\.__(?:INITIAL_STATE|APOLLO_STATE|PRELOADED_STATE)__", body)
+    state = re.search(r"window\.__(?:INITIAL_STATE|APOLLO_STATE|PRELOADED_STATE|NUXT)__|"
+                      r"\"(?:sellerName|seller_name|offerPrice|salePrice|priceDisplay)\"", body)
+    venditore = re.findall(r"[Vv]enduto (?:e spedito )?da\s*([A-Z][\w .&-]{2,30})", body)
     ok = r.status_code == 200 and not blocked and (models or samples)
     print(f"\n### {name}  {'✅' if ok else ('🚫' if blocked or r.status_code in (403, 429, 503) else '⚠️')}")
     print(f"  HTTP {r.status_code} · {len(body) // 1024} KB · {time.time() - t0:.1f}s · url finale: {str(r.url)[:90]}")
@@ -107,6 +121,8 @@ def probe(name, url):
           + (f" (es. {', '.join(models[:5])})" if models else ""))
     print(f"  JSON-LD: {types or 'nessuno'}" + (" · __NEXT_DATA__ presente" if nextdata else "")
           + (f" · {state.group(0)} presente" if state else ""))
+    if venditore:
+        print(f"  venditori citati: {', '.join(sorted(set(v.strip() for v in venditore))[:5])}")
     for s in samples:
         print(f"    esempio: {json.dumps(s, ensure_ascii=False)[:180]}")
 
