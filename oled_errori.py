@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-oled_errori.py  v1.0 — caccia agli ERRORI DI PREZZO (non agli sconti) sui TV OLED.
+oled_errori.py  v1.1 — caccia agli ERRORI DI PREZZO (non agli sconti) sui TV OLED.
 
-Fonte: MediaWorld (unica tra quelle provate che risponde con dati strutturati).
-Scopre da solo le pagine delle varie taglie e le pagine successive.
+Fonte: MediaWorld, categoria completa TV OLED (tutte le taglie, ~190 prodotti).
+Le offerte di venditori terzi del marketplace sono segnalate a parte (rischio truffa).
 
 Un prezzo è segnalato come 🚨 ERRORE PROBABILE se vale almeno una regola forte:
   A) taglia     costa <= 50% dell'OLED più economico (dopo di lui) della stessa taglia
@@ -36,12 +36,11 @@ except ImportError:
     USING_CURL = False
 
 BASE = "https://www.mediaworld.it"
-SEEDS = ["/it/list/tv-oled-55-pollici", "/it/list/tv-oled", "/it/list/tv-oled-42-pollici",
-         "/it/list/tv-oled-48-pollici", "/it/list/tv-oled-65-pollici", "/it/list/tv-oled-77-pollici",
-         "/it/list/tv-oled-83-pollici"]
+SEEDS = ["/it/category/tv-oled-400103.html",          # tutte le taglie
+         "/it/list/tv-oled-55-pollici", "/it/list/tv-oled-65-pollici"]   # riserva se la categoria cambia
 LIST_LINK = re.compile(r'href="((?:https://www\.mediaworld\.it)?/it/list/[a-z0-9-]*oled[a-z0-9-]*)"', re.I)
 STATE_FILE = Path(__file__).resolve().parent / "oled_state.json"
-MAX_PAGES = 8                  # pagine per lista
+MAX_PAGES = 30                 # pagine per lista (la categoria ne ha ~17)
 MAX_LISTS = 15                 # liste totali per giro
 
 # --- Regole -----------------------------------------------------------------
@@ -114,6 +113,8 @@ def products_from_html(text):
                 url = node.get("url") or offers.get("url") or ""
                 avail = str(offers.get("availability") or "")
                 brand = node.get("brand")
+                seller = offers.get("seller")
+                seller = (seller.get("name") if isinstance(seller, dict) else seller) or ""
                 out.append({
                     "name": html.unescape(str(node.get("name") or "")).strip(),
                     "price": price,
@@ -121,6 +122,7 @@ def products_from_html(text):
                     "sku": str(node.get("sku") or node.get("gtin13") or node.get("mpn") or ""),
                     "avail": avail.rsplit("/", 1)[-1],
                     "brand": brand.get("name") if isinstance(brand, dict) else (brand or ""),
+                    "seller": str(seller).strip(),
                     "image": (node.get("image")[0] if isinstance(node.get("image"), list)
                               else node.get("image")) or "",
                 })
@@ -151,6 +153,8 @@ def crawl(s, log):
         path = urlparse(path).path if path.startswith("http") else path
         if path in done:
             continue
+        if found and not path.startswith("/it/category"):
+            break                      # la categoria ha già dato tutto: le liste servono solo di riserva
         done.add(path)
         for page in range(1, MAX_PAGES + 1):
             url = BASE + path + (f"?page={page}" if page > 1 else "")
@@ -249,13 +253,22 @@ def tg(method, payload):
     return r.json()
 
 
+def is_marketplace(p):
+    return bool(p.get("seller")) and not re.search(r"media ?world", p["seller"], re.I)
+
+
 def alert(p, why, dry, drop_from=None):
     e = html.escape
-    text = (f"<b>🚨 PROBABILE ERRORE DI PREZZO</b>\n<b>{e(p['name'][:150])}</b>\n"
+    mkt = is_marketplace(p)
+    head = ("⚠️ ANOMALIA DA VENDITORE TERZO (verifica prima di pagare)" if mkt
+            else "🚨 PROBABILE ERRORE DI PREZZO")
+    text = (f"<b>{head}</b>\n<b>{e(p['name'][:150])}</b>\n"
             f"💶 <b>{p['price']:.2f} €</b> su MediaWorld"
+            + (f" · venduto da <b>{e(p['seller'])}</b>" if mkt else " · venduto da MediaWorld")
             + (f"  📉 era {drop_from:.0f} €" if drop_from else "") + "\n"
             + "\n".join(f"• {e(w)}" for w in why)
-            + "\n⚡ Ordina subito: gli errori vengono corretti o annullati in fretta.")
+            + ("\n🔎 Controlla valutazioni e storico del venditore: prezzi così bassi da terzi sono spesso truffe."
+               if mkt else "\n⚡ Ordina subito: gli errori vengono corretti o annullati in fretta."))
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     if dry or not os.environ.get("TELEGRAM_TOKEN") or not chat:
         print("\n--- AVVISO (simulato) ---\n" + re.sub(r"</?b>", "", text) + "\n" + p["url"])
@@ -277,6 +290,16 @@ def run(dry=False, fetch_session=session):
     t0 = time.time()
     now = datetime.now().isoformat(timespec="seconds")
     st = load_state()
+    if not st.get("hello"):
+        msg = "✅ Bot errori di prezzo OLED attivo! Scrivo qui solo quando trovo un prezzo sbagliato."
+        if dry or not os.environ.get("TELEGRAM_TOKEN"):
+            print("--- MESSAGGIO (simulato) ---\n" + msg)
+        else:
+            try:
+                tg("sendMessage", {"chat_id": os.environ.get("TELEGRAM_CHAT_ID"), "text": msg})
+            except Exception as ex:  # noqa: BLE001
+                print(f"[!] Telegram: {ex}", file=sys.stderr)
+        st["hello"] = now
     log = []
     products, errors = crawl(fetch_session(), log)
     tvs, hits, cheapest = analyze(products, st)
@@ -297,7 +320,8 @@ def run(dry=False, fetch_session=session):
                        for sz in sorted(cheapest))
     print(f"\n✔ {len(products)} prodotti letti · {len(tvs)} OLED validi · {len(hits)} anomalie · "
           f"{sent} avvisi · {time.time() - t0:.0f}s\n  per taglia: {sizes or '-'}\n"
-          f"  prodotti con storico: {len(st['hist'])}")
+          f"  prodotti con storico: {len(st['hist'])} · da venditori terzi: "
+          f"{sum(1 for p in tvs if is_marketplace(p))}")
     if not products:
         print("[!] Nessun prodotto letto: MediaWorld potrebbe aver bloccato o cambiato pagina.",
               file=sys.stderr)
