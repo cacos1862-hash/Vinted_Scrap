@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-oled_errori.py  v1.1 — caccia agli ERRORI DI PREZZO (non agli sconti) sui TV OLED.
+oled_errori.py  v1.2 — caccia agli ERRORI DI PREZZO (non agli sconti) sui TV OLED.
 
 Fonte: MediaWorld, categoria completa TV OLED (tutte le taglie, ~190 prodotti).
 Le offerte di venditori terzi del marketplace sono segnalate a parte (rischio truffa).
@@ -36,12 +36,18 @@ except ImportError:
     USING_CURL = False
 
 BASE = "https://www.mediaworld.it"
-SEEDS = ["/it/category/tv-oled-400103.html",          # tutte le taglie
-         "/it/list/tv-oled-55-pollici", "/it/list/tv-oled-65-pollici"]   # riserva se la categoria cambia
-LIST_LINK = re.compile(r'href="((?:https://www\.mediaworld\.it)?/it/list/[a-z0-9-]*oled[a-z0-9-]*)"', re.I)
+CATEGORY = "/it/category/tv-oled-400103.html"        # tutte le taglie (a volte 403 da GitHub)
+FALLBACK = ["/it/brand/samsung/tv/oled", "/it/brand/sony/tv/tv-oled",
+            "/it/brand/lg/tv/oled", "/it/brand/lg/tv/tv-oled",
+            "/it/brand/philips/tv/oled", "/it/brand/philips/tv/tv-oled",
+            "/it/brand/panasonic/tv/oled", "/it/brand/panasonic/tv/tv-oled",
+            "/it/list/tv-oled-55-pollici", "/it/list/tv-oled-65-pollici"]
+SEEDS = [CATEGORY] + FALLBACK
+LIST_LINK = re.compile(r'href="((?:https://www\.mediaworld\.it)?/it/(?:list|brand/[a-z]+/tv)/[a-z0-9-]*oled[a-z0-9-]*)"',
+                       re.I)
 STATE_FILE = Path(__file__).resolve().parent / "oled_state.json"
 MAX_PAGES = 30                 # pagine per lista (la categoria ne ha ~17)
-MAX_LISTS = 15                 # liste totali per giro
+MAX_LISTS = 20                 # liste totali per giro
 
 # --- Regole -----------------------------------------------------------------
 SIZE_RATIO = 0.50              # A
@@ -73,6 +79,9 @@ def session():
 
 def get(s, url):
     r = s.get(url, timeout=25)
+    if r.status_code == 403:                  # secondo tentativo "da navigazione": arrivo dalla home
+        time.sleep(3)
+        r = s.get(url, timeout=25, headers={"Referer": BASE + "/", "Sec-Fetch-Site": "same-origin"})
     if r.status_code != 200:
         raise RuntimeError(f"HTTP {r.status_code}")
     return r.text
@@ -147,14 +156,14 @@ def key_of(p):
 # ---------------------------------------------------------------------------
 def crawl(s, log):
     """Scopre le liste OLED e scorre le pagine; ritorna {chiave: prodotto}."""
-    todo, done, found, errors = list(SEEDS), set(), {}, 0
+    todo, done, found, errors, cat_ok = list(SEEDS), set(), {}, 0, False
     while todo and len(done) < MAX_LISTS:
         path = todo.pop(0)
         path = urlparse(path).path if path.startswith("http") else path
         if path in done:
             continue
-        if found and not path.startswith("/it/category"):
-            break                      # la categoria ha già dato tutto: le liste servono solo di riserva
+        if cat_ok:
+            break                      # la categoria ha dato tutto: le riserve non servono
         done.add(path)
         for page in range(1, MAX_PAGES + 1):
             url = BASE + path + (f"?page={page}" if page > 1 else "")
@@ -170,6 +179,8 @@ def crawl(s, log):
                     if lp not in done and lp not in todo:
                         todo.append(lp)
             prods = products_from_html(text)
+            if path == CATEGORY and prods:
+                cat_ok = True
             new = 0
             for p in prods:
                 k = key_of(p)
