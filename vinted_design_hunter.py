@@ -1,21 +1,31 @@
 #!/usr/bin/env python3
 """
-vinted_design_hunter.py  v2.2
-(nov 2026: aggiornato alla nuova API Vinted api.vinted.it/svc-catalogue,
- con ripiego automatico sulla pagina /catalog del sito)
+vinted_design_hunter.py  v3.0
 Caccia su Vinted a oggetti di design / modernariato venduti sotto valore.
 
-Per ogni annuncio stima il VALORE di mercato (vocabolario di modelli iconici,
-designer e marchi), calcola il MARGINE (valore stimato - prezzo) e invia su
-Telegram gli affari, con foto e pulsante per aprire subito l'annuncio.
+MOTORE (ispirato ai deal-monitor più efficaci per Vinted/eBay):
+  1. Riconoscimento  vocabolario di modelli, designer e marchi, tollerante
+                     ai refusi (pipistrelo, guzini, magistreti...) e multilingua
+  2. Filtri          esclusioni nette (abbigliamento, gadget, lampadine, infanzia,
+                     carta, annunci "cerco"), repliche ("stile", "style", "Stil"...),
+                     ricambi/accessori, miniature, oggetti minori, difetti
+  3. Valore          stima di base del vocabolario + MEDIANA DI MERCATO calcolata
+                     sugli annunci Vinted puliti dello stesso modello (min. 6
+                     annunci, controllo dispersione, esclusi i promossi),
+                     corretta per coppie, difetti, ricambi
+  4. Profitto netto  rivendita stimata (-15% costi/sconti) meno prezzo totale
+                     con protezione acquisti e spedizione
+  5. Verifica        per i soli candidati legge la descrizione dell'annuncio:
+                     scarta repliche dichiarate, premia firme/etichette
+  6. Avvisi          Telegram con foto, pulsante, mediana di mercato, estratto
+                     della descrizione; niente doppioni (anche se ripubblicati),
+                     nuovo avviso se il prezzo scende ancora (📉)
 
 Livelli:
-  🔥 TOP        prezzo <= 25% del valore e margine >= 80 €
-  ✅ AFFARE     prezzo <= 45% del valore e margine >= 40 €
-  🤔 SOSPETTO   pezzo importante a meno del 4% del valore: spesso falso,
-                miniatura o ricambio, ma a volte è IL colpo. Va guardato.
-  🤔 INTUIZIONE nessun marchio riconosciuto ma tanti segnali d'epoca e prezzo
-                bassissimo (spesso il venditore non sa cos'ha)
+  🔥 TOP        prezzo <= 25% del valore e profitto netto >= 80 €
+  ✅ AFFARE     prezzo <= 45% del valore e profitto netto >= 40 €
+  🤔 SOSPETTO   pezzo importante a prezzo irrealistico: falso o colpaccio
+  🤔 INTUIZIONE nessun marchio ma molti segnali d'epoca/venditore ignaro
 
 Uso:
   pip install curl_cffi
@@ -35,6 +45,7 @@ import json
 import os
 import random
 import re
+import statistics
 import sys
 import time
 import unicodedata
@@ -57,12 +68,25 @@ REPORT_DIR = HERE / "report_vinted"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 
-# Soglie
+# --- Soglie -----------------------------------------------------------------
 TOP_RATIO, TOP_PROFIT = 0.25, 80
 DEAL_RATIO, DEAL_PROFIT = 0.45, 40
 HUNCH_SIGNALS, HUNCH_PRICE = 5, 25
 ALERT_HUNCHES = True
 MAX_ALERTS_PER_RUN = 12
+VERIFY_MAX = 15            # descrizioni lette per giro (solo candidati)
+SHIP_EST = 6.0             # spedizione stimata in acquisto (€)
+RESALE_NET = 0.85          # quota del valore che resta rivendendo
+MKT_MIN_N = 6              # annunci minimi per fidarsi della mediana
+MKT_MAX_SPREAD = 4.0       # p75/p25 massimo: oltre, campione troppo eterogeneo
+MKT_KEEP = 120             # prezzi conservati per modello
+MKT_DAYS = 45              # finestra mobile della mediana
+REDROP = 0.85              # nuovo avviso se il prezzo scende sotto l'85% dell'avvisato
+
+
+def collapse(s):
+    """aa->a, ll->l...: rende uguali 'pipistrello' e 'pipistrelo', 'guzzini' e 'guzini'."""
+    return re.sub(r"([a-z])\1+", r"\1", s)
 
 # ---------------------------------------------------------------------------
 # RICERCHE (pagina 1, più recenti prima). Mix di termini "ingenui" e mirati.
@@ -92,7 +116,14 @@ QUERIES = [
     "pipistrello lampada", "nesso artemide", "atollo", "eclisse artemide",
     "tizio artemide", "boby carrello", "valentine olivetti", "cifra 3 solari",
     "sedia universale", "telefono grillo",
+    # multilingua (Vinted.it mostra anche annunci UE) e refusi di chi non sa
+    "vintage lamp", "lampe vintage", "lampe space age", "lampe champignon", "pilzlampe",
+    "lampe 70er", "paddenstoel lamp", "lampara vintage", "candeeiro vintage",
+    "lampada guzini", "lampada artemid", "pipistrelo lampada", "lampada castiglione",
+    "lampada vecchia", "lampada della nonna", "svuota cantina lampada",
+    "lampada plastica arancione", "lampada a sfera", "lampada a globo", "lampada opalina",
 ]
+
 
 # ---------------------------------------------------------------------------
 # VOCABOLARIO
@@ -105,7 +136,8 @@ VOCAB = []
 
 
 def _add(kind, pattern, val, label=None):
-    rx = re.compile(r"(?<![a-z0-9])(?:" + pattern + r")(?![a-z0-9])")
+    src = collapse(pattern) if kind in "MDB" else pattern     # refusi tollerati solo sui nomi
+    rx = re.compile(r"(?<![a-z0-9])(?:" + src + r")(?![a-z0-9])")
     VOCAB.append((kind, rx, val, label or re.sub(r"[^a-z0-9 ]", "", pattern.split("|")[0])))
 
 
@@ -151,6 +183,7 @@ M(r"coupe.{0,15}(oluce|colombo)|(oluce|colombo).{0,15}coupe", 400, "Coupé Colom
 M(r"acrilica.{0,15}colombo|colombo.{0,15}acrilica", 1500, "Acrilica Colombo")
 M(r"topo.{0,15}(colombo|stilnovo)", 300, "Topo Colombo")
 M(r"hebi", 150, "Hebi Valenti")
+M(r"jill.{0,20}(arteluce|flos|king|miranda)|(arteluce|flos).{0,20}jill", 250, "Jill Arteluce")
 M(r"jucker", 200, "Jucker Flos")
 M(r"triennale.{0,10}stilnovo|stilnovo.{0,10}triennale|lampada triennale", 600, "Triennale Stilnovo")
 M(r"fato.{0,10}stilnovo|stilnovo.{0,10}fato", 200, "Fato Stilnovo")
@@ -165,9 +198,9 @@ M(r"akari", 150, "Akari Noguchi")
 M(r"moon lamp.{0,10}panton|panton.{0,10}flowerpot|flowerpot", 250, "Flowerpot Panton")
 # ---- Arredo ----
 M(r"componibil[ei]|kartell 49(70|65|85)", 50, "Componibili Kartell")
-M(r"boby|bieffeplast", 180, "Boby Colombo")
+M(r"carrello boby|boby.{0,25}(colombo|bieffeplast|b-?line)|(colombo|bieffeplast|b-?line).{0,25}boby", 180, "Boby Colombo")
 M(r"panton chair|sedia panton", 250, "Panton Chair")
-M(r"sedia universale|universale.{0,10}(kartell|colombo)", 150, "Universale Colombo")
+M(r"universale.{0,20}(kartell|colombo)|(kartell|colombo).{0,20}universale|kartell 48(60|67|69)", 150, "Universale Colombo")
 M(r"sedia selene|selene.{0,10}(artemide|magistretti)", 120, "Selene Magistretti")
 M(r"plia", 120, "Plia Castelli")
 M(r"appendiabiti planta|planta castelli", 120, "Planta Castelli")
@@ -203,8 +236,8 @@ M(r"libreria mobil|mobil kartell", 150, "Mobil Kartell")
 M(r"bookworm", 80, "Bookworm Kartell")
 # ---- Elettronica / oggetti ----
 M(r"brionvega cubo|cubo brionvega|ts ?50[25]", 100, "Cubo Brionvega")
-M(r"algol", 250, "Algol Brionvega")
-M(r"doney", 300, "Doney Brionvega")
+M(r"algol.{0,25}(brionvega|tv|televisor\w*|zanuso|sapper)|(brionvega|zanuso|sapper).{0,25}algol", 250, "Algol Brionvega")
+M(r"doney.{0,25}(brionvega|tv|televisor\w*)|(brionvega|tv|televisor\w*).{0,25}doney", 300, "Doney Brionvega")
 M(r"st ?201|black st", 600, "Black ST201 Brionvega")
 M(r"rr ?126|radiofonografo brionvega", 800, "Totem RR126")
 M(r"valentine.{0,15}olivetti|olivetti.{0,15}valentine|macchina da scrivere valentine", 150, "Valentine Olivetti")
@@ -216,7 +249,7 @@ M(r"telefono grillo|grillo.{0,10}(siemens|zanuso|sip)", 120, "Grillo Zanuso")
 M(r"ericofon", 80, "Ericofon")
 M(r"cifra ?[35]", 150, "Cifra Solari")
 M(r"lorenz static|static.{0,10}lorenz", 150, "Static Lorenz")
-M(r"ball clock|george nelson", 200, "Nelson clock")
+M(r"ball clock|(orologio|clock|uhr|horloge|klok).{0,25}nelson|nelson.{0,25}(orologio|clock|uhr|horloge|klok)", 200, "Nelson clock")
 M(r"videosphere", 400, "Videosphere JVC")
 M(r"weltron", 600, "Weltron 2001")
 M(r"keracolor", 1500, "Keracolor")
@@ -259,7 +292,7 @@ for p, v, l in [
     (r"fulvio bianconi|bianconi", 300, "Bianconi"), (r"alfredo barbini|barbini", 150, "Barbini"),
     (r"carlo nason", 120, "Carlo Nason"), (r"alvar aalto|aalto", 200, "Aalto"),
     (r"arne jacobsen|jacobsen", 200, "Jacobsen"), (r"hans wegner|wegner", 300, "Wegner"),
-    (r"isamu noguchi|noguchi", 200, "Noguchi"), (r"eames", 120, "Eames"),
+    (r"isamu noguchi|noguchi", 200, "Noguchi"), (r"george nelson", 200, "George Nelson"), (r"eames", 120, "Eames"),
     (r"saarinen", 300, "Saarinen"), (r"bertoia", 200, "Bertoia"),
     (r"charlotte perriand|perriand", 800, "Perriand"), (r"jean prouve|prouve", 1000, "Prouvé"),
     (r"le corbusier|lc ?[234]", 300, "Le Corbusier"), (r"marcel breuer|breuer", 150, "Breuer"),
@@ -302,12 +335,13 @@ for p, v, l in [
 
 # ---- Segnali positivi ----
 S(r"space ?age", 3, "space age")
-S(r"anni ?'?(60|70|sessanta|settanta)|[67]0 ?'?s|seventies|sixties", 2, "anni 60/70")
+S(r"anni ?'?(60|70|sessanta|settanta)|[67]0 ?'?s|seventies|sixties|[67]0er( jahre)?|"
+  r"annees ?[67]0|jaren ?'?[67]0|anos ?[67]0|anos ?(sesenta|setenta)", 2, "anni 60/70")
 S(r"modernariato", 2, "modernariato")
 S(r"pop ?art", 2, "pop art")
 S(r"mid ?-?century", 2, "mid century")
 S(r"design italiano|italian design", 2, "design italiano")
-S(r"fungo|mushroom", 2, "fungo")
+S(r"fung[oh]i?|mushroom|champignon|pilz\w*|paddenstoel\w*|seta", 2, "fungo")
 S(r"ufo|sputnik|atomic[oa]?|spaziale", 2, "spaziale")
 S(r"bauhaus", 1, "bauhaus")
 S(r"vintage", 1, "vintage")
@@ -322,11 +356,14 @@ S(r"made in italy", 1, "made in italy")
 S(r"replica|riproduzione|copia|falso|fake|imitazione|replique|reproduction|nachbau|replik|kopie|"
   r"copy|namaak|reproductie", -10, "-REPLICA")
 S(r"led", -3, "-led")
-S(r"rott[oa]|da riparare|non funzionante|difett\w*|crepat[oa]|scheggiat[oa]", -1, "-difetti")
 # ---- Esclusioni nette ----
 X(r"t-?shirt|maglia\w*|maglion\w*|felpa|vestit[oi]|abito|jeans|pantalon\w*|gonna|camicia|"
   r"giacca|giubbotto|cappotto|scarpe|sneakers?|stivali|sandali|borsa|zaino|occhiali|"
-  r"costume|pigiama|calze|cappello|sciarpa|leggings", "abbigliamento")
+  r"costume|pigiama|calze|cappello|sciarpa|leggings|aderente|reggiseno|slip|mutand\w*|intimo|"
+  r"shapewear|modellante|taglia|size", "abbigliamento")
+X(r"lampadin\w*|alogen\w*|bulbs?|ampoule\w*|gluhbirne\w*|leuchtmittel|e27|e14|g9|gu10|12 ?v",
+  "lampadine")
+X(r"bambin[oi]|neonat\w*|baby|kids|infant\w*|seggiolin\w*|rialzo|passeggin\w*|culla", "prima infanzia")
 X(r"giocattol\w*|peluche|bambola|lego|playmobil|funko|carnevale|halloween|spielzeug|speelgoed|jouet", "giochi")
 X(r"libr[oi]|rivist[ae]|catalog\w*|monografi\w*|book|books|buch|boek|livre|magazine|taschen|"
   r"poster|print|affiche|druck|stampa|adesiv\w*|sticker|cover|custodia|cartolin\w*|"
@@ -335,20 +372,22 @@ X(r"usb|ricaricabil\w*|bluetooth|telecomando|a batteria|batterie|wireless|smart|
   r"luce notturna|nightlight|veilleuse", "gadget")
 X(r"orecchin\w*|collana|bracciale|anello|gioiell\w*|spilla|ciondolo", "gioielli")
 X(r"ikea|maisons du monde|zara home|h ?& ?m|leroy merlin|westwing|kave home|jysk|shein|temu", "grande distribuzione")
+X(r"cerco|cerchiamo|compro|acquisto|wtb|looking for|je cherche|recherche|suche|gezocht|busco|procuro",
+  "annuncio di ricerca")
 
 
 # Oggetti molto replicati: senza indizi di autenticità la fiducia cala
-RISKY = re.compile(r"(?<![a-z])(?:eames|panton|tulip|barcelona|wassily|cesca|ball chair|bubble chair|"
+RISKY = re.compile(collapse(r"(?<![a-z])(?:eames|panton|tulip|barcelona|wassily|cesca|ball chair|bubble chair|"
                    r"egg chair|arco|ph ?[345]|henningsen|akari|noguchi|flowerpot|fornasetti|bertoia|"
-                   r"saarinen|le corbusier|lc ?[234]|mies|componibil[ei]|juicy salif)(?![a-z])")
-AUTH = re.compile(r"(?<![a-z])(?:originale|vitra|herman miller|knoll|cassina|flos|louis poulsen|fattura|"
-                  r"certificat\w*|etichetta|marchiat\w*|firmat\w*|timbr\w*|kartell|anni ?'?[5-8]0|vintage)(?![a-z])")
+                   r"saarinen|le corbusier|lc ?[234]|mies|componibil[ei]|juicy salif)(?![a-z])"))
+AUTH = re.compile((r"(?<![a-z])(?:originale|vitra|herman miller|knoll|cassina|flos|louis poulsen|fattura|"
+                  r"certificat\w*|etichetta|marchiat\w*|firmat\w*|timbr\w*|kartell|anni ?'?[5-8]0|vintage)(?![a-z])"))
 
 
 # Tipo di oggetto (multilingua: Vinted.it mostra anche annunci UE)
 _C = lambda p: re.compile(r"(?<![a-z0-9])(?:" + p + r")(?![a-z0-9])")
-HIGH_OBJ = _C(r"lampad\w*|lampadari\w*|lume|applique|plafonier\w*|piantana|lamp|lamps|lampe\w*|"
-              r"leuchte\w*|lampara|poltron\w*|sedi[ae]|sgabell\w*|divan\w*|tavol\w*|libreri\w*|"
+HIGH_OBJ = _C(r"\w*lamp\w*|\w*leuchte\w*|lampad\w*|lampadari\w*|lume|applique|plafonier\w*|piantana|lamp|lamps|lampe\w*|"
+              r"leuchte\w*|lampara\w*|candeeiro\w*|luminari\w*|lampen|poltron\w*|sedi[ae]|sgabell\w*|divan\w*|tavol\w*|libreri\w*|"
               r"carrell\w*|scrivani\w*|comodin\w*|mobile|armchair|chair|chairs|stool|sofa|table|desk|"
               r"fauteuil|chaise\w*|tabouret|canape|bureau|sessel|stuhl|stuhle|hocker|tisch|stoel\w*|"
               r"radio|televisor\w*|tv|giradischi|telefono|orologio|clock|horloge|uhr|klok|"
@@ -359,18 +398,59 @@ LOW_OBJ = _C(r"bicchier\w*|calic\w*|tazz\w*|piatt\w*|ciotol\w*|posat\w*|portacan
              r"cuscin\w*|copricuscin\w*|kussen\w*|tessut\w*|stoffa|tovagli\w*|magnet\w*|"
              r"portachiavi|glaasje\w*|glazen|shot|mug|tasse\w*|teller|assiett\w*|sottobicchier\w*|"
              r"t-?shirt|borsa|tote")
-PART = _C(r"ricambi\w*|pezzo di ricambio|spare|replacement|ersatz\w*|vervang\w*|"
+PART = _C(r"ricambi\w*|ricab\w*|pezz[oi] di ricambio|spare|replacement|ersatz\w*|vervang\w*|parts?|"
+          r"tast[oi]|tappin\w*|tappo|coperchi\w*|cassett[oi]|drawer|tiroir|schublade|manigli\w*|"
+          r"pomell\w*|rotell\w*|piedin\w*|nastr[oi]|ribbon|guarnizion\w*|vendita singola|"
+          r"compatibil\w*|adatt[oa] (a|per)|"
+          r"(per|for|pour|fur|voor|para) (la |il |lo |l'|le |i )?(lampada |macchina( da scrivere)? |sedia )?"
+          r"(artemide|flos|olivetti|kartell|brionvega|herman miller|vitra|oluce|martinelli|stilnovo|"
+          r"tizio|tolomeo|valentine|nesso|pipistrello|eames|panton)|"
           r"(boule|globo|vetro|cupola|paralume|diffus\w*|schirm|kap|abat-?jour)\s.{0,30}"
           r"(pour|per|for|fur|voor)\s.{0,15}(lamp\w*|lampada|leuchte|luminaire)")
 MINI = _C(r"guframini|miniatur\w*|miniature|mini|[1-9] ?cm|1[0-5] ?cm")
 STYLE = _C(r"stile|style|styled|stil|im stil|nach art|facon|genre|a la|tipo|simil\w*|ispirat\w*|"
-           r"inspired|inspiriert|look|alike|design-style")
+           r"inspired|inspiriert|inspira\w*|estilo|stijl|look|alike|design-style")
+
 
 
 # ---------------------------------------------------------------------------
+# MOTORE DI VALUTAZIONE
+# ---------------------------------------------------------------------------
+DAMAGE = _C(r"rott[oa]|da riparare|da restaurare|da sistemare|non funzionant\w*|difett\w*|crepat[oa]|"
+            r"crepa|scheggiat[oa]|incomplet[oa]|mancant\w*|broken|kaputt|defekt|casse|abime\w*|kapot")
+PAIR = _C(r"coppia( di)?|paio|pair|paar|set di 2|2 ?x|x ?2|due lampad\w*|2 lampad\w*|deux|zwei|twee")
+DESC_BAD = _C(r"replica|riproduzione|copia|non (e )?originale|not original|pas original|nicht original|"
+              r"ispirat[oa] a|inspired by|in stile|nello stile|sul modello|simile a|imitazione|nachbau|"
+              r"solo (il |la )?(paralume|vetro|base|cupola|diffusore|ricambio)|only (the )?(shade|base|glass)")
+DESC_GOOD = _C(r"originale|firmat[oa]|marchi[oa]|marchiat[oa]|etichetta|timbr\w*|certificat\w*|"
+               r"fattura|scontrino|signed|label|stamped|gestempelt|signe")
+STATUS_POOR = _C(r"discret\w*|soddisfacent\w*|satisfactory|satisfaisant|gebraucht akzeptabel|redelijk")
+
+
 def norm(s):
+    """minuscolo, senza accenti, spazi compattati."""
     s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
     return re.sub(r"\s+", " ", s.lower())
+
+
+# refusi e abbreviazioni frequenti (applicati dopo il collasso delle doppie)
+ALIASES = [(re.compile(r"(?<![a-z])(?:" + a + r")(?![a-z])"), b) for a, b in [
+    (r"artemid|artemie|artmide", "artemide"), (r"castiglione|castigioni", "castiglioni"),
+    (r"stil ?novo", "stilnovo"), (r"fontana ?arte", "fontana arte"), (r"j\.? ?colombo", "joe colombo"),
+    (r"g\.? ?aulenti", "gae aulenti"), (r"v\.? ?magistreti|magistrei", "magistreti"),
+    (r"e\.? ?sotsas|sotsas", "sotsas"), (r"guzini|guzzi ni|guzzin", "guzini"),
+    (r"martineli luce|martinel luce", "martineli luce"), (r"brion ?vega", "brionvega"),
+    (r"oluce|o-luce|o luce", "oluce"), (r"arteluce|arte luce", "arteluce"),
+    (r"panthela|panthel", "panthela"), (r"pipistrel+[oi]?", "pipistrelo"),
+]]
+
+
+def names_text(s):
+    """testo per riconoscere nomi: doppie collassate + alias dei refusi comuni."""
+    t = collapse(s)
+    for rx, rep in ALIASES:
+        t = rx.sub(rep, t)
+    return t
 
 
 def parse_price(v):
@@ -382,22 +462,32 @@ def parse_price(v):
         return None
 
 
-def evaluate(item):
-    """Restituisce un dict con stima, oppure None se l'annuncio va scartato."""
+def market_stats(prices):
+    """Mediana e quartili di un campione di prezzi (None se insufficiente)."""
+    if len(prices) < MKT_MIN_N:
+        return None
+    q = statistics.quantiles(sorted(prices), n=4)
+    return {"median": statistics.median(prices), "p25": q[0], "p75": q[2], "n": len(prices)}
+
+
+def evaluate(item, desc="", market=None):
+    """Valuta un annuncio. Ritorna sempre un dict; se scartato ha la chiave 'skip'."""
     title = item.get("title") or ""
     brand = item.get("brand_title") or ""
-    text = norm(f"{title} {brand}")
+    raw = norm(f"{title} {brand}")
+    text = names_text(raw)               # per modelli/designer/marchi
+    dtext = norm(desc)
     price = parse_price(item.get("price"))
     if price is None or price <= 0:
-        return None
+        return {"skip": "senza prezzo"}
 
     hits = {"M": [], "D": [], "B": []}
-    sig, neg, labels = 0, 0, []
+    sig, neg, labels, flags = 0, 0, [], set()
     for kind, rx, val, label in VOCAB:
-        if not rx.search(text):
+        if not rx.search(text if kind in "MDB" else raw):
             continue
         if kind == "X":
-            return None
+            return {"skip": label}
         if kind == "S":
             if val > 0:
                 sig += val
@@ -408,57 +498,92 @@ def evaluate(item):
             hits[kind].append((val, label))
             labels.append(label)
 
-    value, tier = 0, None
-    mini_hit = [v for v, l in hits["M"] if l.startswith("Guframini")]
-    if mini_hit:                                # miniature ufficiali: valgono la miniatura
-        value, tier = mini_hit[0], "M"
+    # --- valore di base dal vocabolario ---
+    value, tier, model = 0, None, None
+    mini_hit = [(v, l) for v, l in hits["M"] if l.startswith("Guframini")]
+    if mini_hit:
+        (value, model), tier = mini_hit[0], "M"
     elif hits["M"]:
-        value, tier = max(hits["M"])[0], "M"
+        (value, model), tier = max(hits["M"]), "M"
     elif hits["D"] or hits["B"]:
-        cands = [(v * CONF["D"], v, "D") for v, _ in hits["D"]] + \
-                [(v * CONF["B"], v, "B") for v, _ in hits["B"]]
-        _, value, tier = max(cands)
+        cands = [(v * CONF["D"], v, "D", l) for v, l in hits["D"]] + \
+                [(v * CONF["B"], v, "B", l) for v, l in hits["B"]]
+        _, value, tier, model = max(cands)
 
     conf = CONF.get(tier, 0)
     n_hits = len(hits["M"]) + len(hits["D"]) + len(hits["B"])
     conf = min(0.95, conf + 0.05 * max(0, n_hits - 1) + 0.02 * min(sig, 5))
-    if neg <= -10:            # replica dichiarata
+    if neg <= -10:
         conf *= 0.15
+        flags.add("replica")
     else:
         conf = max(0.0, conf + 0.08 * neg)
-
-    if value and RISKY.search(text) and not AUTH.search(text):
+    if value and RISKY.search(text) and not AUTH.search(raw):
         conf *= 0.45
-    if value and STYLE.search(text):            # "stile X" / "X style" = non originale
+        flags.add("molto replicato")
+    if value and STYLE.search(raw):
         conf *= 0.25
-        labels.append("-stile")
+        flags.add("stile")
 
-    # valore in base a che oggetto è davvero
+    # --- descrizione (solo candidati): repliche dichiarate / prove di autenticità ---
+    if dtext:
+        if DESC_BAD.search(dtext):
+            conf *= 0.15
+            flags.add("replica (descrizione)")
+        elif DESC_GOOD.search(dtext):
+            conf = min(0.97, conf + 0.08)
+            labels.append("✔ firmato/originale")
+
+    # --- che oggetto è davvero ---
+    f = 1.0
     if value:
-        hi, lo = HIGH_OBJ.search(text), LOW_OBJ.search(text)
+        hi, lo = HIGH_OBJ.search(raw), LOW_OBJ.search(raw)
         f = 1.0 if (tier == "M" or hi) else 0.4
         if lo and not hi:
             f = min(f, 0.1)
-            labels.append("-oggetto minore")
-        if PART.search(text):
+            flags.add("oggetto minore")
+        if PART.search(raw):
             f = min(f, 0.15)
-            labels.append("-ricambio")
-        if MINI.search(text) and not any(l.startswith("Guframini") for l in labels):
+            flags.add("ricambio")
+        if MINI.search(raw) and not mini_hit:
             f = min(f, 0.1)
-            labels.append("-miniatura")
-        value = round(value * f)
-    ev = value * conf
-    profit = ev - price
-    ratio = price / value if value else None
+            flags.add("miniatura")
+        if DAMAGE.search(raw) or DAMAGE.search(dtext):
+            f *= 0.6
+            flags.add("difetti")
+        status = item.get("status")
+        if isinstance(status, str) and STATUS_POOR.search(norm(status)):
+            f *= 0.75
+            flags.add("condizioni discrete")
+        if PAIR.search(raw) and (tier == "M" or hi) and f >= 0.6:
+            f *= 1.8
+            labels.append("coppia")
+
+    # --- mediana di mercato (solo modelli precisi, campione affidabile) ---
+    mkt = None
+    if tier == "M" and market and model in market:
+        stt = market[model]
+        if stt["p25"] > 0 and stt["p75"] / stt["p25"] <= MKT_MAX_SPREAD:
+            mkt = stt
+            base = min(max(stt["median"], 0.4 * value), 2.0 * value)
+            value = base
+    value_eff = round(value * f)
+
+    # --- economia dell'acquisto ---
+    total = parse_price(item.get("total_item_price")) or round(price * 1.05 + 0.7, 2)
+    cost = total + SHIP_EST
+    ev = value_eff * RESALE_NET * conf
+    profit = ev - cost
+    ratio = price / value_eff if value_eff else None
 
     level = None
-    if value and ratio <= TOP_RATIO and profit >= TOP_PROFIT:
+    if value_eff and ratio <= TOP_RATIO and profit >= TOP_PROFIT:
         level = "TOP"
-    elif value and ratio <= DEAL_RATIO and profit >= DEAL_PROFIT:
+    elif value_eff and ratio <= DEAL_RATIO and profit >= DEAL_PROFIT:
         level = "AFFARE"
-    if level and value >= 300 and ratio < 0.04:
+    if level and ((value_eff >= 300 and ratio < 0.04) or (price <= 2 and value_eff >= 100)):
         level = "SOSPETTO"
-    elif not value and sig >= HUNCH_SIGNALS and price <= HUNCH_PRICE and neg > -2:
+    elif not level and not value and sig >= HUNCH_SIGNALS and price <= HUNCH_PRICE and neg > -2:
         level = "INTUIZIONE"
 
     photo = item.get("photo") or {}
@@ -466,13 +591,19 @@ def evaluate(item):
     url = item.get("url") or f"{BASE}/items/{item.get('id')}"
     if url.startswith("/"):
         url = BASE + url
+    promoted = bool(item.get("promoted") or item.get("is_promoted"))
+    clean = (tier == "M" and not flags and conf >= 0.6 and not promoted
+             and "coppia" not in labels and not mini_hit)
+    user = item.get("user") or {}
     return {
         "id": str(item.get("id")), "title": title, "brand": brand, "price": price,
-        "total": parse_price(item.get("total_item_price")),
-        "value": value, "ev": round(ev), "profit": round(profit),
-        "ratio": ratio, "signals": sig, "level": level,
-        "labels": list(dict.fromkeys(labels)), "url": url,
-        "photo": photo.get("url") or "", "ts": ts,
+        "total": total, "cost": round(cost, 2), "value": value_eff, "ev": round(ev),
+        "profit": round(profit), "ratio": ratio, "conf": round(conf, 2), "signals": sig,
+        "level": level, "model": model, "tier": tier, "clean": clean, "mkt": mkt,
+        "labels": list(dict.fromkeys(labels)), "flags": sorted(flags), "url": url,
+        "photo": photo.get("url") or "", "ts": ts, "fav": item.get("favourite_count"),
+        "seller": user.get("login", "") if isinstance(user, dict) else "",
+        "sig": norm(title)[:60] + f"|{round(price)}", "desc": desc,
     }
 
 
@@ -609,22 +740,55 @@ def fetch(s, query, max_price):
     return _fetch_html(s, query, max_price)
 
 
+
+def fetch_desc(s, url):
+    """Legge titolo/descrizione dall'anteprima (og:) della pagina annuncio."""
+    try:
+        r = s.http.get(url, headers=_doc_headers(), timeout=20)
+        if r.status_code != 200:
+            return ""
+        head = r.text[:200000]
+        m = (re.search(r'<meta[^>]+property="og:description"[^>]+content="([^"]*)"', head)
+             or re.search(r'<meta[^>]+content="([^"]*)"[^>]+property="og:description"', head))
+        return html.unescape(m.group(1)).strip() if m else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 # ---------------------------------------------------------------------------
 def load_state():
     try:
         st = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
         st = {}
-    st.setdefault("seen", {})
-    st.setdefault("alerted", {})
+    for k in ("seen", "alerted", "sigs", "px", "mkt"):
+        st.setdefault(k, {})
+    for k, v in list(st["alerted"].items()):        # formato v2: solo data
+        if isinstance(v, str):
+            st["alerted"][k] = [v, None]
     return st
 
 
 def save_state(st):
-    limit = (datetime.now() - timedelta(days=30)).isoformat()
-    for k in ("seen", "alerted"):
-        st[k] = {i: t for i, t in st[k].items() if t >= limit}
+    now = datetime.now()
+    d30 = (now - timedelta(days=30)).isoformat()
+    st["seen"] = {i: t for i, t in st["seen"].items() if t >= d30}
+    st["alerted"] = {i: v for i, v in st["alerted"].items() if v[0] >= d30}
+    st["sigs"] = {k: t for k, t in st["sigs"].items() if t >= (now - timedelta(days=14)).isoformat()}
+    st["px"] = {i: v for i, v in st["px"].items() if v[1] >= d30}
+    dm = (now - timedelta(days=MKT_DAYS)).isoformat()
+    for model, rows in list(st["mkt"].items()):
+        rows = {i: v for i, v in rows.items() if v[1] >= dm}
+        keep = sorted(rows.items(), key=lambda kv: kv[1][1])[-MKT_KEEP:]
+        st["mkt"][model] = dict(keep)
+        if not keep:
+            del st["mkt"][model]
     STATE_FILE.write_text(json.dumps(st, separators=(",", ":")), encoding="utf-8")
+
+
+def market_table(st):
+    return {m: s for m, rows in st["mkt"].items()
+            if (s := market_stats([v[0] for v in rows.values()]))}
 
 
 # ---------------------------------------------------------------------------
@@ -643,14 +807,27 @@ def age_text(ts):
 
 def caption(r):
     e = html.escape
-    lines = [f"<b>{ICON[r['level']]}</b>", f"<b>{e(r['title'][:120])}</b>"]
-    tot = f" (tot. {r['total']:.2f} €)" if r["total"] else ""
-    lines.append(f"💶 <b>{r['price']:.2f} €</b>{tot}")
+    out = [f"<b>{ICON[r['level']]}</b>", f"<b>{e(r['title'][:120])}</b>"]
+    drop = f"  📉 era {r['drop_from']:.0f} €" if r.get("drop_from") else ""
+    out.append(f"💶 <b>{r['price']:.2f} €</b> (totale ~{r['cost']:.0f} € con spedizione){drop}")
     if r["value"]:
-        lines.append(f"💎 valore stimato ~{r['value']} € · prezzo al {r['ratio']:.0%}")
-        lines.append(f"📈 margine atteso ~{r['profit']} €")
-    lines.append(f"🏷 {e(', '.join(r['labels'][:6]))}")
-    return "\n".join(lines) + "\n" + age_text(r["ts"])
+        out.append(f"💎 valore ~{r['value']} € · prezzo al {r['ratio']:.0%}")
+        if r["mkt"]:
+            out.append(f"📊 mediana Vinted {r['mkt']['median']:.0f} € su {r['mkt']['n']} annunci")
+        out.append(f"📈 profitto netto stimato ~{r['profit']} € (affidabilità {r['conf']:.0%})")
+    out.append(f"🏷 {e(', '.join(r['labels'][:6]))}")
+    if r["flags"]:
+        out.append(f"⚠️ {e(', '.join(r['flags']))}")
+    extra = []
+    if r.get("fav"):
+        extra.append(f"❤️ {r['fav']}")
+    if r.get("seller"):
+        extra.append(f"👤 {e(r['seller'])}")
+    if extra:
+        out.append(" · ".join(extra))
+    if r.get("desc"):
+        out.append(f"📝 <i>{e(r['desc'][:160])}{'…' if len(r['desc']) > 160 else ''}</i>")
+    return "\n".join(out) + "\n" + age_text(r["ts"])
 
 
 def tg(method, payload):
@@ -672,9 +849,11 @@ def send_text(text, dry=False):
 
 def send_alert(r, dry):
     text = caption(r)
+    if len(text) > 1000:                        # limite didascalia foto Telegram
+        text = text[:1000] + "…"
     chat = os.environ.get("TELEGRAM_CHAT_ID")
     if dry or not os.environ.get("TELEGRAM_TOKEN") or not chat:
-        print("\n--- AVVISO TELEGRAM (simulato) ---\n" + re.sub(r"</?b>", "", text) + r["url"])
+        print("\n--- AVVISO TELEGRAM (simulato) ---\n" + re.sub(r"</?[bi]>", "", text) + r["url"])
         return
     kb = {"inline_keyboard": [[{"text": "🛒 Apri su Vinted", "url": r["url"]}]]}
     try:
@@ -684,7 +863,7 @@ def send_alert(r, dry):
                                    "parse_mode": "HTML", "reply_markup": kb})
         if not res.get("ok"):
             tg("sendMessage", {"chat_id": chat, "text": text + r["url"], "parse_mode": "HTML",
-                               "reply_markup": kb, "disable_web_page_preview": False})
+                               "reply_markup": kb})
     except Exception as ex:  # noqa: BLE001
         print(f"[!] Telegram: {ex}", file=sys.stderr)
 
@@ -699,7 +878,7 @@ def write_report(results):
         f'<div class="b"><span class="l {r["level"] or ""}">{e(ICON.get(r["level"], "—"))}</span>'
         f'<div class="t">{e(r["title"])}</div><div class="p">{r["price"]:.2f} €'
         f'{(" · valore ~%d €" % r["value"]) if r["value"] else ""}</div>'
-        f'<div class="r">{e(", ".join(r["labels"]))}</div></div></a>' for r in results)
+        f'<div class="r">{e(", ".join(r["labels"] + r["flags"]))}</div></div></a>' for r in results)
     css = (":root{--bg:#f6f4ef;--c:#fff;--f:#1d1d1b;--m:#6b6b66}"
            "@media(prefers-color-scheme:dark){:root{--bg:#141412;--c:#1f1f1c;--f:#eee;--m:#9a9a92}}"
            "body{margin:0;font:15px system-ui;background:var(--bg);color:var(--f)}"
@@ -707,7 +886,8 @@ def write_report(results):
            ".c{background:var(--c);border-radius:10px;overflow:hidden;color:inherit;text-decoration:none}"
            ".c img{width:100%;aspect-ratio:1;object-fit:cover;background:#8883}.b{padding:10px}"
            ".t{font-weight:600;margin:6px 0}.p{color:#d9531e;font-weight:700}.r{color:var(--m);font-size:12px}"
-           ".l{font-size:11px;font-weight:700}.TOP{color:#e0441b}.AFFARE{color:#1e9e52}.INTUIZIONE,.SOSPETTO{color:#2a7de1}")
+           ".l{font-size:11px;font-weight:700}.TOP{color:#e0441b}.AFFARE{color:#1e9e52}"
+           ".INTUIZIONE,.SOSPETTO{color:#2a7de1}")
     path.write_text(f'<!doctype html><meta charset="utf-8"><meta name="viewport" '
                     f'content="width=device-width,initial-scale=1"><title>Vinted hunter</title>'
                     f'<style>{css}</style><div class="g">{cards}</div>', encoding="utf-8")
@@ -715,18 +895,21 @@ def write_report(results):
 
 
 # ---------------------------------------------------------------------------
-def run_once(args, fetcher=fetch, session_factory=make_session):
+ORDER = {"TOP": 0, "AFFARE": 1, "SOSPETTO": 2, "INTUIZIONE": 3, None: 4}
+
+
+def run_once(args, fetcher=fetch, session_factory=make_session, desc_fetcher=fetch_desc):
     t0 = time.time()
     st = load_state()
     now = datetime.now().isoformat(timespec="seconds")
     if not st.get("hello"):
         send_text("✅ Vinted design hunter attivo! Ti scrivo qui appena trovo un affare.", args.dry_run)
         st["hello"] = now
-    last_err = ""
     session = session_factory()
     queries = args.query or QUERIES
-    found, n_items, errors = {}, 0, 0
+    raw, n_items, errors, last_err = {}, 0, 0, ""
 
+    # 1) raccolta
     for qi, q in enumerate(queries, 1):
         try:
             try:
@@ -744,14 +927,80 @@ def run_once(args, fetcher=fetch, session_factory=make_session):
             continue
         n_items += len(items)
         for it in items:
-            iid = str(it.get("id"))
-            if iid in found:
-                continue
-            ev = evaluate(it)
-            if ev and (ev["level"] or args.report):
-                found[iid] = ev
+            raw.setdefault(str(it.get("id")), it)
         if not args.fast:
             time.sleep(random.uniform(1.2, 2.5))
+
+    # 2) primo passaggio: annunci "puliti" alimentano la mediana di mercato
+    skipped = {}
+    first = {}
+    for iid, it in raw.items():
+        ev = evaluate(it)
+        if "skip" in ev:
+            skipped[ev["skip"]] = skipped.get(ev["skip"], 0) + 1
+            continue
+        first[iid] = (it, ev)
+        # nel campione solo prezzi plausibili: gli affari stessi e i prezzi folli lo falserebbero
+        if ev["clean"] and 0.35 * ev["value"] <= ev["price"] <= 3 * ev["value"]:
+            st["mkt"].setdefault(ev["model"], {})[iid] = [ev["price"], now]
+    market = market_table(st)
+
+    # 3) secondo passaggio con la mediana
+    results = []
+    for iid, (it, _) in first.items():
+        ev = evaluate(it, market=market)
+        for fl in ev["flags"]:
+            skipped[fl] = skipped.get(fl, 0) + 1
+        if ev["value"]:
+            prev = st["px"].get(iid)
+            if prev and prev[0] > ev["price"] * 1.08:
+                ev["drop_from"] = prev[0]
+            st["px"][iid] = [ev["price"], now] if not prev else [max(prev[0], ev["price"]), prev[1]]
+        if ev["level"] or args.report:
+            results.append((it, ev))
+    results.sort(key=lambda p: (ORDER[p[1]["level"]], -p[1]["profit"], p[1]["price"]))
+
+    # 4) candidati da avvisare: niente doppioni, ma sì ai nuovi ribassi
+    def wanted(ev):
+        if not ev["level"] or (not ALERT_HUNCHES and ev["level"] == "INTUIZIONE"):
+            return False
+        prev = st["alerted"].get(ev["id"])
+        if prev:
+            if prev[1] and ev["price"] <= prev[1] * REDROP:
+                ev["drop_from"] = prev[1]
+                return True
+            return False
+        return ev["sig"] not in st["sigs"]
+
+    cands = [(it, ev) for it, ev in results if wanted(ev)]
+
+    # 5) verifica descrizione dei migliori candidati
+    to_alert, verified, dropped = [], 0, 0
+    for it, ev in cands:
+        if len(to_alert) >= MAX_ALERTS_PER_RUN:
+            break
+        if verified < VERIFY_MAX and ev["level"] != "INTUIZIONE":
+            verified += 1
+            desc = desc_fetcher(session, ev["url"])
+            if not args.fast:
+                time.sleep(random.uniform(0.6, 1.2))
+            if desc:
+                ev2 = evaluate(it, desc=desc, market=market)
+                if "skip" in ev2 or not ev2["level"]:
+                    dropped += 1
+                    st["alerted"][ev["id"]] = [now, ev["price"]]   # non ricontrollare
+                    continue
+                ev2["drop_from"] = ev.get("drop_from")
+                ev = ev2
+        to_alert.append(ev)
+
+    for ev in to_alert:
+        send_alert(ev, args.dry_run)
+        st["alerted"][ev["id"]] = [now, ev["price"]]
+        st["sigs"][ev["sig"]] = now
+        time.sleep(0.4)
+    for _, ev in results:
+        st["seen"].setdefault(ev["id"], now)
 
     blocked = n_items == 0 and errors > 0
     if blocked:
@@ -762,29 +1011,20 @@ def run_once(args, fetcher=fetch, session_factory=make_session):
             st["warn"] = now
     else:
         st.pop("warn", None)
-
-    order = {"TOP": 0, "AFFARE": 1, "SOSPETTO": 2, "INTUIZIONE": 3, None: 4}
-    results = sorted(found.values(), key=lambda r: (order[r["level"]], -r["profit"], r["price"]))
-    to_alert = [r for r in results if r["level"] and r["id"] not in st["alerted"]
-                and (ALERT_HUNCHES or r["level"] != "INTUIZIONE")][:MAX_ALERTS_PER_RUN]
-    for r in to_alert:
-        send_alert(r, args.dry_run)
-        st["alerted"][r["id"]] = now
-        time.sleep(0.4)
-    for r in results:
-        st["seen"].setdefault(r["id"], now)
     save_state(st)
 
     if args.report:
-        print(f"[i] report: {write_report(results)}")
-    deals = sum(1 for r in results if r["level"])
-    counts = " ".join(f"{k}={sum(1 for r in results if r['level'] == k)}"
+        print(f"[i] report: {write_report([ev for _, ev in results])}")
+    counts = " ".join(f"{k}={sum(1 for _, r in results if r['level'] == k)}"
                       for k in ("TOP", "AFFARE", "SOSPETTO", "INTUIZIONE"))
-    print(f"\n✔ {len(queries)} ricerche · {n_items} annunci analizzati · {deals} affari ({counts}) · "
-          f"{len(to_alert)} avvisi nuovi · {time.time() - t0:.0f}s")
+    top_skip = ", ".join(f"{k}={v}" for k, v in sorted(skipped.items(), key=lambda kv: -kv[1])[:8])
+    print(f"\n✔ {len(queries)} ricerche · {n_items} annunci ({len(raw)} unici) · {counts}\n"
+          f"  avvisi inviati {len(to_alert)} · descrizioni lette {verified} (scartati {dropped}) · "
+          f"modelli con mediana {len(market)} · {time.time() - t0:.0f}s\n"
+          f"  filtrati: {top_skip or '-'}")
     if blocked:
         print("[!] Nessun annuncio letto: controlla il log sopra.", file=sys.stderr)
-    return results, blocked
+    return [ev for _, ev in results], blocked
 
 
 def main():
