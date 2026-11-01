@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vinted_design_hunter.py  v3.0
+vinted_design_hunter.py  v3.1  (anni 60-70 + 80, 90, 2000)
 Caccia su Vinted a oggetti di design / modernariato venduti sotto valore.
 
 MOTORE (ispirato ai deal-monitor più efficaci per Vinted/eBay):
@@ -122,6 +122,13 @@ QUERIES = [
     "lampada guzini", "lampada artemid", "pipistrelo lampada", "lampada castiglione",
     "lampada vecchia", "lampada della nonna", "svuota cantina lampada",
     "lampada plastica arancione", "lampada a sfera", "lampada a globo", "lampada opalina",
+    # anni 80 / 90 / 2000
+    "design anni 80", "design anni 90", "lampada anni 80", "lampada anni 90", "memphis design",
+    "postmoderno", "design postmoderno", "y2k design", "design anni 2000", "lampada postmoderna",
+    "philippe starck", "alessi anni 90", "ingo maurer", "luceplan", "flos lampada", "fontana arte uovo",
+    "de lucchi", "ron arad", "tom dixon", "magis", "vitra", "cappellini", "edra", "kartell ghost",
+    "bang olufsen", "beogram", "braun vintage", "dieter rams", "walkman sony vintage", "imac g3",
+    "swatch anni 80", "sedia postmoderna", "lampada alogena anni 80",
 ]
 
 
@@ -352,6 +359,121 @@ S(r"firmat[oa]|marchiat[oa]|etichetta originale|signed|con marchio", 2, "firmato
 S(r"eredit\w*|soffitta|cantina|svuota\w*|della nonna|della zia|trovat[oa]", 2, "venditore ignaro")
 S(r"non so (il valore|cosa sia|di che marca|la marca)|non conosco", 3, "venditore ignaro")
 S(r"made in italy", 1, "made in italy")
+# ============================================================================
+# ANNI 80 · 90 · 2000
+# ============================================================================
+# ---- Memphis e postmoderno (anni 80) ----
+M(r"tahiti.{0,15}(lamp\w*|lampada|de lucchi|memphis)|(de lucchi|memphis).{0,15}tahiti", 600, "Tahiti De Lucchi")
+M(r"super lamp|super.{0,10}(bedin|memphis)", 700, "Super Lamp Bedin")
+M(r"ashoka", 1500, "Ashoka Sottsass")
+M(r"first chair|sedia first|first.{0,10}de lucchi", 700, "First De Lucchi")
+M(r"oceanic.{0,15}(lamp\w*|lampada|de lucchi)", 600, "Oceanic De Lucchi")
+M(r"callimaco", 700, "Callimaco Sottsass")
+M(r"proust.{0,20}(mendini|magis|cappellini|poltron\w*|sedia|chair)|(mendini|poltrona|sedia).{0,20}proust", 1500, "Proust Mendini")
+M(r"casablanca.{0,15}(sottsass|memphis)|(sottsass|memphis).{0,15}casablanca", 5000, "Casablanca Sottsass")
+M(r"feltri.{0,15}(pesce|cassina)|poltrona feltri|(pesce|cassina).{0,15}feltri", 1500, "Feltri Pesce")
+M(r"nobody'?s perfect", 600, "Nobody's Perfect Pesce")
+M(r"how high the moon|miss blanche", 3000, "Kuramata")
+M(r"wink.{0,10}(cassina|kita)|poltrona wink", 1200, "Wink Cassina")
+M(r"sciangai", 120, "Sciangai Zanotta")
+M(r"quaderna", 1200, "Quaderna Superstudio")
+M(r"ds-?600|ds-?1025|non stop.{0,10}de sede", 2500, "De Sede")
+M(r"sedia cab|cab.{0,10}(cassina|bellini)", 250, "Cab Cassina")
+M(r"nomos.{0,10}(tecno|foster)|tavolo nomos", 1500, "Nomos Tecno")
+M(r"daphine", 150, "Daphine Lumina")
+M(r"vp ?globe", 1200, "VP Globe Panton")
+# ---- Starck, Alessi e anni 90 ----
+M(r"miss sissi", 60, "Miss Sissi Flos")
+M(r"ara.{0,10}(flos|starck)|(flos|starck).{0,10}ara", 150, "Ara Flos")
+M(r"romeo moon|romeo soft", 250, "Romeo Flos")
+M(r"archimoon", 250, "Archimoon Flos")
+M(r"rosy angelis", 120, "Rosy Angelis Flos")
+M(r"hot bertaa", 150, "Hot Bertaa Alessi")
+M(r"lord yo", 80, "Lord Yo Starck")
+M(r"costes.{0,10}(starck|driade)|sedia costes", 300, "Costes Starck")
+M(r"(attila|napoleon|gnome).{0,10}kartell|kartell.{0,10}(attila|napoleon|gnome)", 80, "Gnomi Kartell")
+M(r"(9093|9091).{0,15}alessi|alessi.{0,15}9093|kettle.{0,10}graves|bollitore.{0,15}graves|graves.{0,15}bollitore", 60, "Bollitore Graves")
+M(r"alessi.{0,15}9091|bollitore.{0,15}sapper|sapper.{0,15}bollitore", 100, "Bollitore Sapper")
+M(r"il conico|la conica|la cupola.{0,10}(alessi|rossi)", 100, "Aldo Rossi Alessi")
+M(r"pito.{0,10}(alessi|gehry)", 250, "Pito Gehry")
+M(r"wiggle.{0,15}(chair|sedia|stool|sgabello|gehry|vitra)|(gehry|vitra).{0,15}wiggle", 700, "Wiggle Gehry")
+M(r"tom vac", 200, "Tom Vac Arad")
+M(r"well tempered|big easy.{0,15}(arad|poltrona|moroso)", 1500, "Ron Arad")
+M(r"bulb.{0,15}(maurer|ingo)|(maurer|ingo).{0,15}bulb", 300, "Bulb Maurer")
+M(r"lucellino", 300, "Lucellino Maurer")
+M(r"zettel'?z", 500, "Zettel'z Maurer")
+M(r"yayaho|ya ya ho", 600, "YaYaHo Maurer")
+M(r"birds birds birds|porca miseria.{0,15}(maurer|lampadario|chandelier)", 1200, "Ingo Maurer")
+M(r"brera.{0,10}(flos|castiglioni)|(flos|castiglioni).{0,10}brera", 150, "Brera Flos")
+M(r"glo-?ball", 250, "Glo-Ball Flos")
+M(r"spun light", 400, "Spun Light Flos")
+M(r"uovo.{0,10}(fontana ?arte|fontanaarte)|(fontana ?arte|fontanaarte).{0,10}uovo", 150, "Uovo FontanaArte")
+M(r"costanza.{0,10}luceplan|luceplan.{0,10}costanza|lampada costanza", 120, "Costanza Luceplan")
+M(r"titania.{0,15}(luceplan|lampad\w*)|(luceplan|lampada).{0,15}titania", 250, "Titania Luceplan")
+M(r"berenice.{0,15}(luceplan|lampad\w*)|(luceplan|lampada).{0,15}berenice", 100, "Berenice Luceplan")
+M(r"melampo.{0,15}(artemide|lampad\w*)|(artemide|lampada).{0,15}melampo", 120, "Melampo Artemide")
+M(r"pipe.{0,10}artemide|artemide.{0,10}pipe", 250, "Pipe Artemide")
+# ---- anni 2000 ----
+M(r"louis ghost|ghost.{0,10}kartell|kartell.{0,10}ghost", 120, "Louis Ghost Kartell")
+M(r"bourgie", 120, "Bourgie Kartell")
+M(r"air-?chair", 50, "Air-Chair Magis")
+M(r"chair one|bombo.{0,10}magis|magis.{0,10}bombo|sgabello bombo", 150, "Magis")
+M(r"puppy.{0,10}magis|magis.{0,10}puppy", 70, "Puppy Magis")
+M(r"vegetal.{0,15}(vitra|chair|sedia|bouroullec)|(vitra|bouroullec).{0,15}(vegetal|algues)|algues.{0,10}vitra", 120, "Bouroullec Vitra")
+M(r"thinking man'?s chair", 1000, "Thinking Man's Chair")
+M(r"s-?chair.{0,10}(dixon|cappellini)|(dixon|cappellini).{0,10}s-?chair", 800, "S-Chair Dixon")
+M(r"jack light|mirror ball.{0,10}dixon|beat light", 200, "Tom Dixon")
+M(r"embryo chair", 1500, "Embryo Newson")
+M(r"(favela|vermelha).{0,20}(campana|edra|sedia|poltrona|chair)|(campana|edra).{0,20}(favela|vermelha)", 1500, "Campana Edra")
+# ---- design elettronico e oggetti (60-2000) ----
+M(r"beogram", 350, "Beogram B&O")
+M(r"beosound ?9000", 700, "Beosound 9000")
+M(r"beolab ?(8000|6000)", 700, "Beolab B&O")
+M(r"beocenter", 500, "Beocenter B&O")
+M(r"beovox", 150, "Beovox B&O")
+M(r"beomaster", 250, "Beomaster B&O")
+M(r"braun sk ?4|sk ?4.{0,10}braun|schneewittchensarg", 1200, "SK4 Braun")
+M(r"braun.{0,15}t ?(3|1000)|t ?1000.{0,10}braun|braun atelier", 500, "Braun Rams")
+M(r"braun.{0,10}et ?(66|44)|et ?(66|44).{0,10}braun", 80, "Calcolatrice Braun")
+M(r"tps-?l2|walkman professional|wm-?d6c", 300, "Walkman storico")
+M(r"macintosh 128k|macintosh 512k|twentieth anniversary macintosh", 1000, "Macintosh storico")
+M(r"macintosh (plus|se|classic)", 200, "Macintosh classico")
+M(r"imac g3", 120, "iMac G3")
+M(r"imac g4", 200, "iMac G4")
+M(r"g4 cube|power ?mac.{0,10}cube", 250, "G4 Cube")
+M(r"swatch.{0,20}(keith haring|kiki picasso|jelly fish)|(keith haring|kiki picasso).{0,20}swatch", 250, "Swatch d'artista")
+
+for p, v, l in [
+    (r"michele de lucchi|de lucchi", 150, "De Lucchi"), (r"nathalie du pasquier|du pasquier", 300, "Du Pasquier"),
+    (r"george sowden|sowden", 150, "Sowden"), (r"matteo thun", 120, "Matteo Thun"),
+    (r"martine bedin|bedin", 300, "Bedin"), (r"peter shire", 300, "Peter Shire"),
+    (r"aldo cibic|cibic", 150, "Cibic"), (r"masanori umeda|umeda", 400, "Umeda"),
+    (r"shiro kuramata|kuramata", 1000, "Kuramata"), (r"michael graves", 100, "Graves"),
+    (r"aldo rossi", 120, "Aldo Rossi"), (r"philippe starck|starck", 80, "Starck"),
+    (r"jasper morrison", 150, "Morrison"), (r"konstantin grcic|grcic", 150, "Grcic"),
+    (r"bouroullec", 120, "Bouroullec"), (r"tom dixon", 150, "Tom Dixon"),
+    (r"marc newson|newson", 400, "Newson"), (r"fratelli campana|campana brothers|humberto campana", 500, "Campana"),
+    (r"toshiyuki kita", 300, "Kita"), (r"dieter rams", 250, "Dieter Rams"), (r"frank gehry|gehry", 300, "Gehry"),
+    (r"andrea branzi|branzi", 400, "Branzi"), (r"denis santachiara|santachiara", 200, "Santachiara"),
+    (r"paolo rizzatto|rizzatto", 100, "Rizzatto"), (r"alberto meda", 100, "Meda"),
+    (r"stefano giovannoni|giovannoni", 60, "Giovannoni"), (r"karim rashid", 80, "Rashid"),
+]:
+    D(p, v, l)
+for p, v, l in [
+    (r"memphis milano", 300, "Memphis Milano"), (r"luceplan", 80, "Luceplan"), (r"magis", 60, "Magis"),
+    (r"cappellini", 200, "Cappellini"), (r"edra", 300, "Edra"), (r"moroso", 200, "Moroso"),
+    (r"de sede", 400, "De Sede"), (r"fritz hansen", 150, "Fritz Hansen"),
+    (r"bang ?& ?olufsen|bang olufsen|b ?& ?o", 150, "Bang & Olufsen"), (r"braun", 30, "Braun"),
+    (r"zerodisegno", 300, "Zerodisegno"), (r"alchimia", 300, "Studio Alchimia"),
+]:
+    B(p, v, l)
+
+S(r"anni ?'?(80|90|ottanta|novanta)|[89]0 ?'?s|eighties|nineties|[89]0er( jahre)?|"
+  r"annees ?[89]0|jaren ?'?[89]0|anos ?[89]0", 2, "anni 80/90")
+S(r"y2k|anni ?2000|2000s|annees 2000", 1, "anni 2000")
+S(r"post-?modern\w*|postmodern\w*|radical design|design radicale|memphis", 2, "postmoderno")
+S(r"alogen\w* anni|plexi.{0,10}anni ?80|neon.{0,10}anni ?80", 1, "luce anni 80")
+
 # ---- Segnali negativi ----
 S(r"replica|riproduzione|copia|falso|fake|imitazione|replique|reproduction|nachbau|replik|kopie|"
   r"copy|namaak|reproductie", -10, "-REPLICA")
@@ -361,8 +483,8 @@ X(r"t-?shirt|maglia\w*|maglion\w*|felpa|vestit[oi]|abito|jeans|pantalon\w*|gonna
   r"giacca|giubbotto|cappotto|scarpe|sneakers?|stivali|sandali|borsa|zaino|occhiali|"
   r"costume|pigiama|calze|cappello|sciarpa|leggings|aderente|reggiseno|slip|mutand\w*|intimo|"
   r"shapewear|modellante|taglia|size", "abbigliamento")
-X(r"lampadin\w*|alogen\w*|bulbs?|ampoule\w*|gluhbirne\w*|leuchtmittel|e27|e14|g9|gu10|12 ?v",
-  "lampadine")
+X(r"lampadin\w*|ampoule\w*|gluhbirne\w*|leuchtmittel|e27|e14|g9|gu10|r7s|12 ?v|"
+  r"alogen\w* \d+ ?w|\d+ ?w alogen\w*|bulbs? (led|e27|pack)|led bulbs?", "lampadine")
 X(r"bambin[oi]|neonat\w*|baby|kids|infant\w*|seggiolin\w*|rialzo|passeggin\w*|culla", "prima infanzia")
 X(r"giocattol\w*|peluche|bambola|lego|playmobil|funko|carnevale|halloween|spielzeug|speelgoed|jouet", "giochi")
 X(r"libr[oi]|rivist[ae]|catalog\w*|monografi\w*|book|books|buch|boek|livre|magazine|taschen|"
@@ -379,14 +501,17 @@ X(r"cerco|cerchiamo|compro|acquisto|wtb|looking for|je cherche|recherche|suche|g
 # Oggetti molto replicati: senza indizi di autenticità la fiducia cala
 RISKY = re.compile(collapse(r"(?<![a-z])(?:eames|panton|tulip|barcelona|wassily|cesca|ball chair|bubble chair|"
                    r"egg chair|arco|ph ?[345]|henningsen|akari|noguchi|flowerpot|fornasetti|bertoia|"
-                   r"saarinen|le corbusier|lc ?[234]|mies|componibil[ei]|juicy salif)(?![a-z])"))
+                   r"saarinen|le corbusier|lc ?[234]|mies|componibil[ei]|juicy salif|ghost|series ?7|serie ?7|"
+                   r"egg chair|memphis|tolix|wiggle|s-?chair|vp ?globe|flowerpot)(?![a-z])"))
 AUTH = re.compile((r"(?<![a-z])(?:originale|vitra|herman miller|knoll|cassina|flos|louis poulsen|fattura|"
                   r"certificat\w*|etichetta|marchiat\w*|firmat\w*|timbr\w*|kartell|anni ?'?[5-8]0|vintage)(?![a-z])"))
 
 
 # Tipo di oggetto (multilingua: Vinted.it mostra anche annunci UE)
 _C = lambda p: re.compile(r"(?<![a-z0-9])(?:" + p + r")(?![a-z0-9])")
-HIGH_OBJ = _C(r"\w*lamp\w*|\w*leuchte\w*|lampad\w*|lampadari\w*|lume|applique|plafonier\w*|piantana|lamp|lamps|lampe\w*|"
+HIGH_OBJ = _C(r"giradisch\w*|turntable|plattenspieler|stereo|amplificator\w*|diffusor\w*|speakers?|"
+              r"lautsprecher|walkman|computer|calcolatric\w*|bollitor\w*|kettle|wasserkocher|"
+              r"caffettier\w*|teier\w*|spremiagrum\w*|appendiabit\w*|\w*lamp\w*|\w*leuchte\w*|lampad\w*|lampadari\w*|lume|applique|plafonier\w*|piantana|lamp|lamps|lampe\w*|"
               r"leuchte\w*|lampara\w*|candeeiro\w*|luminari\w*|lampen|poltron\w*|sedi[ae]|sgabell\w*|divan\w*|tavol\w*|libreri\w*|"
               r"carrell\w*|scrivani\w*|comodin\w*|mobile|armchair|chair|chairs|stool|sofa|table|desk|"
               r"fauteuil|chaise\w*|tabouret|canape|bureau|sessel|stuhl|stuhle|hocker|tisch|stoel\w*|"
@@ -396,7 +521,8 @@ LOW_OBJ = _C(r"bicchier\w*|calic\w*|tazz\w*|piatt\w*|ciotol\w*|posat\w*|portacan
              r"candelier\w*|kandelaar\w*|kaarsenhouder\w*|kerzen\w*|bougeoir\w*|eierdop\w*|portauov\w*|"
              r"egg ?cups?|zuccherier\w*|lattier\w*|milchk\w*|fondue\w*|borden|foulard|sciarp\w*|"
              r"cuscin\w*|copricuscin\w*|kussen\w*|tessut\w*|stoffa|tovagli\w*|magnet\w*|"
-             r"portachiavi|glaasje\w*|glazen|shot|mug|tasse\w*|teller|assiett\w*|sottobicchier\w*|"
+             r"portachiavi|cuffie|auricolar\w*|earbuds|headphones|kopfhorer|casque|cinturin\w*|"
+             r"glaasje\w*|glazen|shot|mug|tasse\w*|teller|assiett\w*|sottobicchier\w*|"
              r"t-?shirt|borsa|tote")
 PART = _C(r"ricambi\w*|ricab\w*|pezz[oi] di ricambio|spare|replacement|ersatz\w*|vervang\w*|parts?|"
           r"tast[oi]|tappin\w*|tappo|coperchi\w*|cassett[oi]|drawer|tiroir|schublade|manigli\w*|"
