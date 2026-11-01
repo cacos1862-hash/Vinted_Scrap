@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vinted_design_hunter.py  v3.1  (anni 60-70 + 80, 90, 2000)
+vinted_design_hunter.py  v3.2  (anni 60-70 + 80, 90, 2000)
 Caccia su Vinted a oggetti di design / modernariato venduti sotto valore.
 
 MOTORE (ispirato ai deal-monitor più efficaci per Vinted/eBay):
@@ -71,7 +71,7 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # --- Soglie -----------------------------------------------------------------
 TOP_RATIO, TOP_PROFIT = 0.25, 80
 DEAL_RATIO, DEAL_PROFIT = 0.45, 40
-HUNCH_SIGNALS, HUNCH_PRICE = 5, 25
+HUNCH_SIGNALS, HUNCH_PRICE, HUNCH_FAV = 4, 25, 15
 ALERT_HUNCHES = True
 MAX_ALERTS_PER_RUN = 12
 VERIFY_MAX = 15            # descrizioni lette per giro (solo candidati)
@@ -252,7 +252,8 @@ M(r"lettera ?22", 120, "Lettera 22")
 M(r"lettera ?32", 70, "Lettera 32")
 M(r"divisumma", 100, "Divisumma Olivetti")
 M(r"programma ?101", 3000, "Programma 101")
-M(r"telefono grillo|grillo.{0,10}(siemens|zanuso|sip)", 120, "Grillo Zanuso")
+M(r"grillo.{0,25}(telefon\w*|siemens|zanuso|sapper|sip|face standard|italtel)|"
+  r"(telefon\w*|siemens|zanuso|sapper|sip|italtel).{0,25}grillo", 120, "Grillo Zanuso")
 M(r"ericofon", 80, "Ericofon")
 M(r"cifra ?[35]", 150, "Cifra Solari")
 M(r"lorenz static|static.{0,10}lorenz", 150, "Static Lorenz")
@@ -314,7 +315,7 @@ for p, v, l in [
     (r"harvey guzzini", 200, "Harvey Guzzini"), (r"meblo", 120, "Meblo"),
     (r"iguzzini|guzzini", 50, "Guzzini"), (r"artemide", 60, "Artemide"),
     (r"flos", 80, "Flos"), (r"stilnovo", 150, "Stilnovo"), (r"arredoluce", 300, "Arredoluce"),
-    (r"arteluce", 300, "Arteluce"), (r"fontana ?arte", 200, "Fontana Arte"),
+    (r"arteluce", 250, "Arteluce"), (r"fontana ?arte", 200, "Fontana Arte"),
     (r"oluce", 100, "Oluce"), (r"martinelli luce", 120, "Martinelli Luce"),
     (r"valenti luce|valenti milano", 100, "Valenti"), (r"lampada reggiani|reggiani luce|reggiani illuminazione", 80, "Reggiani"),
     (r"targetti", 80, "Targetti"), (r"leucos", 60, "Leucos"), (r"lumi milano", 100, "Lumi"),
@@ -336,7 +337,7 @@ for p, v, l in [
     (r"bertoncello", 60, "Bertoncello"), (r"fanciullacci", 50, "Fanciullacci"),
     (r"zaccagnini", 80, "Zaccagnini"), (r"rosenthal", 40, "Rosenthal"),
     (r"iittala", 30, "Iittala"), (r"arabia finland", 40, "Arabia"),
-    (r"memphis", 200, "Memphis"), (r"driade", 150, "Driade"),
+    (r"driade", 150, "Driade"),
 ]:
     B(p, v, l)
 
@@ -441,7 +442,9 @@ M(r"macintosh (plus|se|classic)", 200, "Macintosh classico")
 M(r"imac g3", 120, "iMac G3")
 M(r"imac g4", 200, "iMac G4")
 M(r"g4 cube|power ?mac.{0,10}cube", 250, "G4 Cube")
-M(r"swatch.{0,20}(keith haring|kiki picasso|jelly fish)|(keith haring|kiki picasso).{0,20}swatch", 250, "Swatch d'artista")
+M(r"swatch.{0,20}(keith haring|kiki picasso|mimmo paladino)|(keith haring|kiki picasso).{0,20}swatch", 250, "Swatch d'artista")
+M(r"swatch.{0,20}jelly ?fish|jelly ?fish.{0,20}swatch", 70, "Swatch Jelly Fish")
+M(r"arno.{0,20}(italy|italora|colombo)|(colombo|italora).{0,20}arno", 15, "Arno Italora (vetri)")
 
 for p, v, l in [
     (r"michele de lucchi|de lucchi", 150, "De Lucchi"), (r"nathalie du pasquier|du pasquier", 300, "Du Pasquier"),
@@ -491,7 +494,8 @@ X(r"libr[oi]|rivist[ae]|catalog\w*|monografi\w*|book|books|buch|boek|livre|magaz
   r"poster|print|affiche|druck|stampa|adesiv\w*|sticker|cover|custodia|cartolin\w*|"
   r"cd|dvd|vinile|quadro su tela|puzzle", "carta/media")
 X(r"usb|ricaricabil\w*|bluetooth|telecomando|a batteria|batterie|wireless|smart|alexa|"
-  r"luce notturna|nightlight|veilleuse", "gadget")
+  r"luce notturna|nightlight|veilleuse|sans fil|senza fil[oi]|kabellos|cordless|inalambric\w*|"
+  r"sem fio|tactile|touch|dimmerabile led", "gadget")
 X(r"orecchin\w*|collana|bracciale|anello|gioiell\w*|spilla|ciondolo", "gioielli")
 X(r"ikea|maisons du monde|zara home|h ?& ?m|leroy merlin|westwing|kave home|jysk|shein|temu", "grande distribuzione")
 X(r"cerco|cerchiamo|compro|acquisto|wtb|looking for|je cherche|recherche|suche|gezocht|busco|procuro",
@@ -523,34 +527,64 @@ LOW_OBJ = _C(r"bicchier\w*|calic\w*|tazz\w*|piatt\w*|ciotol\w*|posat\w*|portacan
              r"cuscin\w*|copricuscin\w*|kussen\w*|tessut\w*|stoffa|tovagli\w*|magnet\w*|"
              r"portachiavi|cuffie|auricolar\w*|earbuds|headphones|kopfhorer|casque|cinturin\w*|"
              r"glaasje\w*|glazen|shot|mug|tasse\w*|teller|assiett\w*|sottobicchier\w*|"
-             r"t-?shirt|borsa|tote")
+             r"t-?shirt|borsa|tote|svuotatasch\w*|portaoggett\w*|gancio|ganci|grucc\w*|crochets?|"
+             r"haken|bilancia|thermos|portabottigli\w*|cestin\w*|rubrica|accendin\w*|cendrier\w*|"
+             r"aschenbecher|portacener\w*|pochette|clutch|tasche|portafogli\w*|eierdop\w*|"
+             r"bicchierin\w*|piattin\w*|sottopentola|magnete")
 PART = _C(r"ricambi\w*|ricab\w*|pezz[oi] di ricambio|spare|replacement|ersatz\w*|vervang\w*|parts?|"
+          r"pieces? detachees?|onderdel\w*|^(transformat\w*|trasformator\w*)|(transformat\w*|trasformator\w*) (pour|per|for|fur|voor|para|avec|con)|cadre|rahmen|dessous|"
+          r"deckel|couvercle|capot|puntina|testina|cartridge|tonarm|cinghia|courroie|riem|belt|nadel|"
+          r"lente acustica|acoustic lens|kit|tastier\w*|keyboard|tastatur|clavier|mouse|souris|"
+          r"base con meccanica|mancan[oa]|manque\w*|fehlt|ontbreekt|telecomando|fernbedienung|"
           r"tast[oi]|tappin\w*|tappo|coperchi\w*|cassett[oi]|drawer|tiroir|schublade|manigli\w*|"
           r"pomell\w*|rotell\w*|piedin\w*|nastr[oi]|ribbon|guarnizion\w*|vendita singola|"
           r"compatibil\w*|adatt[oa] (a|per)|"
-          r"(per|for|pour|fur|voor|para) (la |il |lo |l'|le |i )?(lampada |macchina( da scrivere)? |sedia )?"
+          r"(per|for|pour|fur|voor|para) (la |il |lo |l'|le |i |the |die |de )?"
+          r"(lampada |lampe |lamp |macchina( da scrivere)? |sedia |platine |giradischi |plattenspieler |power )?"
           r"(artemide|flos|olivetti|kartell|brionvega|herman miller|vitra|oluce|martinelli|stilnovo|"
-          r"tizio|tolomeo|valentine|nesso|pipistrello|eames|panton)|"
+          r"tizio|tolomeo|valentine|nesso|pipistrello|eames|panton|beogram|beosound|beolab|bang|b&o|"
+          r"braun|mac|imac|g4|ipod|walkman)|"
           r"(boule|globo|vetro|cupola|paralume|diffus\w*|schirm|kap|abat-?jour)\s.{0,30}"
           r"(pour|per|for|fur|voor)\s.{0,15}(lamp\w*|lampada|leuchte|luminaire)")
 MINI = _C(r"guframini|miniatur\w*|miniature|mini|[1-9] ?cm|1[0-5] ?cm")
 STYLE = _C(r"stile|style|styled|stil|im stil|nach art|facon|genre|a la|tipo|simil\w*|ispirat\w*|"
-           r"inspired|inspiriert|inspira\w*|estilo|stijl|look|alike|design-style")
+           r"inspired|inspiriert|inspira\w*|estilo|stijl|look|alike|design-style|"
+           r"ahnlich\w*|aehnlich\w*|similaire|simile|vergelijkbaar|lijkt op|a la maniere|"
+           r"in the style|style of|im stile|nachempfunden|d'apres|wie von")
+# altra marca presente: il nome del designer è un richiamo, non l'autore
+GENERIC_MAKER = _C(r"wofi|honsel|massive (lighting|leuchte\w*)|brilliant (ag|leuchte\w*|lighting)|"
+                   r"paul neuhaus|trio (leuchte\w*|lighting)|eglo|globo lighting|shell electric|"
+                   r"hillebrand|cosack|temde|kaiser leuchten|staff leuchten|lidl|livarno|aldi|"
+                   r"primark|tchibo|hema|kave home")
+NONWORK = _C(r"non funzionant\w*|not working|ne fonctionne pas|hors service|defekt|kaputt|kapot|"
+             r"funktioniert nicht|werkt niet|da riparare|for repair")
+NEGATION = re.compile(r"(?<![a-z])(nessun\w*|senza|niente|zero|no|non|pas d\w*|aucun\w*|sans|kein\w*|"
+                      r"ohne|geen|zonder|sin|without)\s+(\S+(\s+|$)){0,3}")
 
 
 
 # ---------------------------------------------------------------------------
 # MOTORE DI VALUTAZIONE
 # ---------------------------------------------------------------------------
-DAMAGE = _C(r"rott[oa]|da riparare|da restaurare|da sistemare|non funzionant\w*|difett\w*|crepat[oa]|"
+DAMAGE = _C(r"rott[oa]|rottur\w*|da riparare|da restaurare|da sistemare|non funzionant\w*|difett\w*|crepat[oa]|"
             r"crepa|scheggiat[oa]|incomplet[oa]|mancant\w*|broken|kaputt|defekt|casse|abime\w*|kapot")
 PAIR = _C(r"coppia( di)?|paio|pair|paar|set di 2|2 ?x|x ?2|due lampad\w*|2 lampad\w*|deux|zwei|twee")
 DESC_BAD = _C(r"replica|riproduzione|copia|non (e )?originale|not original|pas original|nicht original|"
               r"ispirat[oa] a|inspired by|in stile|nello stile|sul modello|simile a|imitazione|nachbau|"
+              r"per ricambi|da ricambio|per pezzi|pour pieces|pieces detachees|for parts|ersatzteil\w*|"
+              r"voor onderdelen|para piezas|ahnlich|similaire a|style of|im stil von|"
               r"solo (il |la )?(paralume|vetro|base|cupola|diffusore|ricambio)|only (the )?(shade|base|glass)")
 DESC_GOOD = _C(r"originale|firmat[oa]|marchi[oa]|marchiat[oa]|etichetta|timbr\w*|certificat\w*|"
                r"fattura|scontrino|signed|label|stamped|gestempelt|signe")
 STATUS_POOR = _C(r"discret\w*|soddisfacent\w*|satisfactory|satisfaisant|gebraucht akzeptabel|redelijk")
+
+
+def damaged(t):
+    """Difetti reali: 'non funzionante' conta sempre; gli altri solo se non negati
+    ('nessuna crepa o rottura' NON è un difetto)."""
+    if not t:
+        return False
+    return bool(NONWORK.search(t) or DAMAGE.search(NEGATION.sub(" ", t)))
 
 
 def norm(s):
@@ -566,7 +600,7 @@ ALIASES = [(re.compile(r"(?<![a-z])(?:" + a + r")(?![a-z])"), b) for a, b in [
     (r"g\.? ?aulenti", "gae aulenti"), (r"v\.? ?magistreti|magistrei", "magistreti"),
     (r"e\.? ?sotsas|sotsas", "sotsas"), (r"guzini|guzzi ni|guzzin", "guzini"),
     (r"martineli luce|martinel luce", "martineli luce"), (r"brion ?vega", "brionvega"),
-    (r"oluce|o-luce|o luce", "oluce"), (r"arteluce|arte luce", "arteluce"),
+    (r"oluce|o-luce|o luce", "oluce"), (r"arteluce", "arteluce"),
     (r"panthela|panthel", "panthela"), (r"pipistrel+[oi]?", "pipistrelo"),
 ]]
 
@@ -650,12 +684,19 @@ def evaluate(item, desc="", market=None):
     if value and STYLE.search(raw):
         conf *= 0.25
         flags.add("stile")
+    if value and GENERIC_MAKER.search(raw):          # "Wofi ... Ingo Maurer": il designer è un richiamo
+        conf *= 0.3
+        flags.add("altra marca")
+    designers = {l for _, l in hits["D"]}
+    if tier != "M" and len(designers) >= 2:          # "Joe Colombo Vico Magistretti" su lampada anonima
+        conf *= 0.4
+        flags.add("nomi di richiamo")
 
     # --- descrizione (solo candidati): repliche dichiarate / prove di autenticità ---
     if dtext:
         if DESC_BAD.search(dtext):
             conf *= 0.15
-            flags.add("replica (descrizione)")
+            flags.add("replica/ricambio (descrizione)")
         elif DESC_GOOD.search(dtext):
             conf = min(0.97, conf + 0.08)
             labels.append("✔ firmato/originale")
@@ -665,7 +706,7 @@ def evaluate(item, desc="", market=None):
     if value:
         hi, lo = HIGH_OBJ.search(raw), LOW_OBJ.search(raw)
         f = 1.0 if (tier == "M" or hi) else 0.4
-        if lo and not hi:
+        if (lo and not hi) or (dtext and LOW_OBJ.search(dtext) and not hi and tier != "M"):
             f = min(f, 0.1)
             flags.add("oggetto minore")
         if PART.search(raw):
@@ -674,7 +715,7 @@ def evaluate(item, desc="", market=None):
         if MINI.search(raw) and not mini_hit:
             f = min(f, 0.1)
             flags.add("miniatura")
-        if DAMAGE.search(raw) or DAMAGE.search(dtext):
+        if damaged(raw) or damaged(dtext):
             f *= 0.6
             flags.add("difetti")
         status = item.get("status")
@@ -707,9 +748,16 @@ def evaluate(item, desc="", market=None):
         level = "TOP"
     elif value_eff and ratio <= DEAL_RATIO and profit >= DEAL_PROFIT:
         level = "AFFARE"
+    # mai avvisi per ciò che si dichiara copia, "stile", paragone o ricambio
+    if flags & {"stile", "replica", "replica/ricambio (descrizione)", "ricambio", "altra marca"}:
+        level = None
     if level and ((value_eff >= 300 and ratio < 0.04) or (price <= 2 and value_eff >= 100)):
         level = "SOSPETTO"
-    elif not level and not value and sig >= HUNCH_SIGNALS and price <= HUNCH_PRICE and neg > -2:
+    # intuizione: solo oggetti "veri" (lampade, arredi, radio...), richiesti (❤️) o firmati
+    fav = item.get("favourite_count") or 0
+    if (not level and not value and sig >= HUNCH_SIGNALS and price <= HUNCH_PRICE and neg > -2
+            and HIGH_OBJ.search(raw) and not LOW_OBJ.search(raw) and not STYLE.search(raw)
+            and (fav >= HUNCH_FAV or "firmato" in labels)):
         level = "INTUIZIONE"
 
     photo = item.get("photo") or {}
@@ -729,7 +777,8 @@ def evaluate(item, desc="", market=None):
         "labels": list(dict.fromkeys(labels)), "flags": sorted(flags), "url": url,
         "photo": photo.get("url") or "", "ts": ts, "fav": item.get("favourite_count"),
         "seller": user.get("login", "") if isinstance(user, dict) else "",
-        "sig": norm(title)[:60] + f"|{round(price)}", "desc": desc,
+        "sig": (f"{(user.get('login') if isinstance(user, dict) else '') or norm(title)[:40]}|"
+                f"{model or norm(title)[:40]}|{round(price)}"), "desc": desc,
     }
 
 
